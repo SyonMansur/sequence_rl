@@ -11,7 +11,7 @@ class QNetwork(nn.Module):
         # hidden to hidden
         self.fc2 = nn.Linear(hidden_dimensions, hidden_dimensions)
         # hidden to output layer
-        self.fc3 = nn.Linear(hidden_dimensions, output_dimensions)
+        self.fc3 = nn.Linear(hidden_dimensions, hidden_dimensions)
         # 3 layers allows for nonlinear relationships
         self.relu = nn.ReLU()
         # relu is my activation function that is the all or nothing like a neuron
