@@ -13,7 +13,7 @@ CONFIGS = {
         "alpha": 0.001
     },
     "various_degrees": {
-        "num_actions": 10, 
+        "num_actions": 30, 
         "reward_method": "exact", 
         "steps": 10000, 
         "alpha": 0.001
@@ -67,10 +67,12 @@ def run_experiment():
 
         if i > (current_config["steps"] / 2):
             if random.random() < 0.06:
-                angles = np.linspace(0, 2 * np.pi, current_config["num_actions"], endpoint=False)
-                original_theta = angles[target_index]
-                target_theta = (original_theta - (np.pi / 2)) % (2 * np.pi)
-                target_index = np.argmin(np.abs(angles - target_theta))
+                # angles = np.linspace(0, 2 * np.pi, current_config["num_actions"], endpoint=False)
+                # original_theta = angles[target_index]
+                # target_theta = (original_theta - (np.pi / 2)) % (2 * np.pi)
+                # target_index = np.argmin(np.abs(angles - target_theta))
+                stimulus_angle = random.randint(0, current_config["num_actions"] - 1)
+                target_index = stimulus_angle
 
         # give the 3x2 stimulus
         stim_seq = []
