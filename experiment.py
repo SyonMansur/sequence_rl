@@ -13,7 +13,7 @@ CONFIGS = {
         "alpha": 0.001
     },
     "various_degrees": {
-        "num_actions": 30, 
+        "num_actions": 20, 
         "reward_method": "exact", 
         "steps": 10000, 
         "alpha": 0.001
@@ -55,6 +55,13 @@ def run_experiment():
     accuracy_history = []
     activation_history = []
 
+    num_actions = current_config["num_actions"]
+    angles = np.linspace(0, 2*np.pi, num_actions, endpoint=False) # create array of values in radians 
+    shift_lookup_table = {} # lookup table to find match
+    for xx in range(num_actions):
+        target_theta = (angles[xx] - (np.pi/2)) % (2*np.pi)
+        shift_lookup_table[xx] = np.argmin(np.abs(angles - target_theta)) # find nearest neighbor to 90 degree shift
+
 
     for i in range(current_config["steps"]):
         # get an angle out of the possible options (usually 5) 
@@ -71,8 +78,8 @@ def run_experiment():
                 # original_theta = angles[target_index]
                 # target_theta = (original_theta - (np.pi / 2)) % (2 * np.pi)
                 # target_index = np.argmin(np.abs(angles - target_theta))
-                stimulus_angle = random.randint(0, current_config["num_actions"] - 1)
-                target_index = stimulus_angle
+                # stimulus_angle = random.randint(0, current_config["num_actions"] - 1)
+                target_index = shift_lookup_table[stimulus_angle]
 
         # give the 3x2 stimulus
         stim_seq = []
