@@ -6,14 +6,8 @@ from model import DQN_Agent
 
 # make it so that its easy to swap between the presets
 CONFIGS = {
-    "five_options": {
-        "num_actions": 5, 
-        "reward_method": "exact", 
-        "steps": 10000, 
-        "alpha": 0.001
-    },
     "various_degrees": {
-        "num_actions": 20, 
+        "num_actions": 16, 
         "reward_method": "exact", 
         "steps": 10000, 
         "alpha": 0.001
@@ -55,6 +49,9 @@ def run_experiment():
     accuracy_history = []
     activation_history = []
 
+    # array to save what type of trial it is
+    trial_type_array = []
+
     num_actions = current_config["num_actions"]
     angles = np.linspace(0, 2*np.pi, num_actions, endpoint=False) # create array of values in radians 
     shift_lookup_table = {} # lookup table to find match
@@ -88,12 +85,33 @@ def run_experiment():
         
         # list to tensor , then go from [6] to [1,6] (need 2d input)
         state_tensor = torch.FloatTensor(stim_seq).unsqueeze(0)
+
+        # get the q values so i can look at the expected value
+        with torch.no_grad():
+            q_values = agent.model(state_tensor)
         
         # choose an action and do it
         prediction = agent.choose_action(state_tensor)
+
+        expected_value = q_values[0, prediction].item()
+
         
         # calculate the reward
         reward = calculate_reward(prediction, target_index, method=current_config["reward_method"])
+
+        # 0 is expected reward, 1 is unexpected reward, 2 is unexpected lack of reward, 3 is expected lack of reward
+        if expected_value >= 0.7 and reward == 1.0:
+            trial_type = 0
+        elif expected_value < 0.3 and reward == 1.0:
+            trial_type = 1
+        elif expected_value >= 0.7 and reward == 0.0:
+            trial_type = 2
+        elif expected_value < 0.3 and reward == 0.0:
+            trial_type = 3
+        else:
+            trial_type = -1
+
+        trial_type_array.append(trial_type)
         
         # update the weights
         loss = agent.update(state_tensor, prediction, reward)
@@ -103,8 +121,62 @@ def run_experiment():
         # log the weights
         loss_history.append(loss)
         accuracy_history.append(reward) # 1 if right, 0 if wrong
+        
+        
+    # 0 is expected reward, 1 is unexpected reward, 2 is unexpected lack of reward, 3 is expected lack of reward
+    type_labels = ['exp reward', 'unexp reward', 'unexp lack', 'exp lack']
+    colors = ['forestgreen', 'lime', 'red', 'gray']
+   
+    # focus only on the second half of the experiment
+    start_trial = current_config["steps"] // 2
+    act_matrix = np.array(activation_history)
+    types = np.array(trial_type_array)
+    
+    # get the mean activation per neuron, per the trial type (4 values per neuron)
+    means_per_type = []
+    for trial_category in range(4): # iterate through trial types
+        # filter for trials matching the type within the second half
+        matches = np.where((types == trial_category) & (np.arange(len(types)) >= start_trial))[0]
+        
+        if len(matches) > 0:
+            means_per_type.append(np.mean(act_matrix[matches], axis=0)) # get mean activation
+        else:
+            # fill with zeros if the category never occurred (common for surprise early/late)
+            means_per_type.append(np.zeros(act_matrix.shape[1]))
 
 
+    # new figure for categorical analysis
+    fig_cat, (tax1, tax2) = plt.subplots(2, 1, figsize=(10, 10))
+    
+    neuron_indexes = np.arange(act_matrix.shape[1])
+    bar_width = 0.2
+    
+    # plot mean activations across the four categories
+    for category_position, mean_values in enumerate(means_per_type):
+        tax1.bar(neuron_indexes + (category_position - 1.5) * bar_width, 
+                    mean_values, bar_width, 
+                    label=type_labels[category_position], 
+                    color=colors[category_position])
+    
+    tax1.set_title("mean activation per reward category (second half)")
+    tax1.set_ylabel("activation level")
+    tax1.legend()
+
+
+    # plot the omission signal (unexpected lack minus expected lack)
+    # shows how neurons respond specifically to rule-breaking disappointment
+    omission_delta = means_per_type[2] - means_per_type[3]
+    tax2.bar(neuron_indexes, omission_delta, color='purple')
+    tax2.set_title("omission signal (unexp lack - exp lack)")
+    tax2.set_ylabel("delta activation")
+    tax2.axhline(0, color='black', linewidth=1)
+
+    # in both cases, here, the physical outcome is 0 reward
+    # but because they're not 0, we know there's some internal state (violation of expectation)
+    # positive bars mean that neurons fire more when a reward is missing (rule broken)
+
+    # negative bars means they fire less when disappointed (imagine these are dopamine neurons)
+    # 0 bars mean that they don't care about reward outcome
 
     # plot
     fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize = (10,15))

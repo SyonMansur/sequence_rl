@@ -4,7 +4,7 @@ import torch.optim as optim
 import numpy as np
 
 class QNetwork(nn.Module):
-    def __init__(self, input_dimensions = 6, hidden_dimensions = 64, output_dimensions = 5):
+    def __init__(self, input_dimensions = 6, hidden_dimensions = 32, output_dimensions = 5):
         super(QNetwork, self).__init__() # standard for inheritance of the parent class
         # input to hidden
         self.fc1 = nn.Linear(input_dimensions, hidden_dimensions)
