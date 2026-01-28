@@ -4,7 +4,7 @@ import torch.optim as optim
 import numpy as np
 
 class QNetwork(nn.Module):
-    def __init__(self, input_dimensions = 6, hidden_dimensions = 32, output_dimensions = 5):
+    def __init__(self, input_dimensions = 6, hidden_dimensions = 64, output_dimensions = 5):
         super(QNetwork, self).__init__() # standard for inheritance of the parent class
         # input to hidden
         self.fc1 = nn.Linear(input_dimensions, hidden_dimensions)
@@ -55,6 +55,7 @@ class DQN_Agent:
             return torch.argmax(q_values).item() # efficiency because i dont need to do backprop here (update instead)
         
     def update(self, state_tensor, action, reward):
+        self.model.train() # set to training mode
         all_q_values = self.model(state_tensor) # get the activations of the output layer (1x5 matrix)
         current_q = all_q_values[0, action] # get the value for the action i actually took
 
@@ -62,10 +63,20 @@ class DQN_Agent:
 
         loss = self.criterion(current_q, target_q) # get RPE using MSE
 
+
         self.optimizer.zero_grad() # clears previous errors
         loss.backward() # backprop
+
+
+
+        l1_gradients = self.model.fc1.weight.grad.clone().cpu().numpy()
+        l1_feedback = np.mean(np.abs(l1_gradients), axis = 1)
+
+        l2_gradients = self.model.fc2.weight.grad.clone().cpu().numpy()
+        l2_feedback = np.mean(np.abs(l2_gradients), axis = 1)
+
         self.optimizer.step() # ADAM to adjust weights
 
-        return loss.item()
+        return loss.item(), l1_feedback, l2_feedback
 
         
