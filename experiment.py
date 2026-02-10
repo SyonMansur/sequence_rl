@@ -2,7 +2,6 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import random
-from matplotlib.lines import Line2D # needed for the custom legend in fig 7
 from model import DQN_Agent
 
 CONFIG = {
@@ -20,7 +19,7 @@ def calculate_reward(prediction, target):
     return 1.0 if prediction == target else 0.0
 
 def run_experiment():
-    print(f"Running Experiment | generating all plots including q-value time series")
+    print(f"Running Experiment | generating all plots including q-values")
     
     sequence_length = 3
     agent = DQN_Agent(
@@ -35,7 +34,7 @@ def run_experiment():
     activation_history = [] 
     trial_type_array = []
     
-    # tracking raw expectations over time
+    # new history: tracking the raw expectation (Q-value)
     q_value_history = []
     
     # feedback metrics
@@ -101,7 +100,7 @@ def run_experiment():
         loss_history.append(loss)
         accuracy_history.append(reward) 
         
-        # save raw q
+        # save q value
         q_value_history.append(expected_value)
         
         l1_feedback_history.append(l1_fb)
@@ -122,6 +121,10 @@ def run_experiment():
     l1_matrix = np.array(l1_feedback_history)
     l2_matrix = np.array(l2_feedback_history)
     raw_matrix = np.array([np.full(len(neuron_indexes), err) for err in raw_error_history])
+    
+    # q values are scalar, need to broadcast for bar chart consistency or just compute mean scalar
+    # actually, for the q-value plot, we don't need neuron dimensions. 
+    # we just want a single bar per trial type showing the average Q.
     q_matrix = np.array(q_value_history) 
     
     types = np.array(trial_type_array)
@@ -130,7 +133,7 @@ def run_experiment():
     means_l1 = []
     means_l2 = []
     means_raw = []
-    means_q = [] 
+    means_q = [] # store scalar means here
     
     for t in range(4): 
         matches = np.where((types == t) & (np.arange(len(types)) >= start_trial))[0]
@@ -139,7 +142,7 @@ def run_experiment():
             means_l1.append(np.mean(l1_matrix[matches], axis=0))
             means_l2.append(np.mean(l2_matrix[matches], axis=0))
             means_raw.append(np.mean(raw_matrix[matches], axis=0))
-            means_q.append(np.mean(q_matrix[matches]))
+            means_q.append(np.mean(q_matrix[matches])) # scalar mean
         else:
             zeros = np.zeros(act_matrix.shape[1])
             means_act.append(zeros)
@@ -215,7 +218,8 @@ def run_experiment():
     plt.savefig('plots/5_raw_source_error.png')
     plt.close()
     
-    # 6. RAW Q-VALUES (EXPECTATION ANALYSIS - BARS)
+    # 6. RAW Q-VALUES (EXPECTATION ANALYSIS)
+    # simple bar chart of the 4 scalar means
     fig6, ax8 = plt.subplots(figsize=(8, 6))
     x_pos = np.arange(len(type_labels))
     ax8.bar(x_pos, means_q, color=colors, alpha=0.8)
@@ -224,34 +228,13 @@ def run_experiment():
     ax8.set_title("Agent Confidence (Raw Q-Value Expectation)")
     ax8.set_ylabel("Predicted Value (0.0 - 1.0)")
     ax8.set_ylim(0, 1.1)
+    
+    # adding text labels on top of bars
     for i, v in enumerate(means_q):
         ax8.text(i, v + 0.02, f"{v:.2f}", ha='center', fontweight='bold')
+        
     plt.tight_layout()
     plt.savefig('plots/6_agent_confidence.png')
-    plt.close()
-
-    # 7. Q-VALUES OVER TIME (SCATTER)
-    # this shows the "bands" of confidence forming.
-    fig7, ax9 = plt.subplots(figsize=(12, 6))
-    
-    # map trial types to colors. -1 (uncertain) gets black.
-    scatter_colors = [colors[t] if t >= 0 else 'black' for t in trial_type_array]
-    
-    # scatter plot. s=1 makes dots tiny so you can see density.
-    ax9.scatter(range(len(q_value_history)), q_value_history, c=scatter_colors, s=1, alpha=0.6)
-    
-    ax9.set_title("Q-Value Evolution Over Time")
-    ax9.set_xlabel("Trial Step")
-    ax9.set_ylabel("Q-Value (Expectation)")
-    ax9.set_ylim(-0.1, 1.2) # give it some breathing room
-    
-    # manual legend because scatter c=list breaks auto legend
-    legend_elements = [Line2D([0], [0], marker='o', color='w', markerfacecolor=c, label=l) 
-                       for c, l in zip(colors, type_labels)]
-    ax9.legend(handles=legend_elements, loc='center right')
-    
-    plt.tight_layout()
-    plt.savefig('plots/7_q_values_over_time.png')
     plt.close()
 
 if __name__ == "__main__":
