@@ -50,7 +50,7 @@ class DQN_Agent:
         self.model = QNetwork(input_dimensions, num_actions*4, num_actions)
         
         # standard adam optimizer. mse loss for regression since we predict q-values.
-        self.optimizer = optim.Adam(self.model.parameters(), lr=alpha) 
+        self.optimizer = optim.Adam(self.model.parameters(), lr=alpha, weight_decay=1e-3) 
         self.criterion = nn.MSELoss() 
 
     def choose_action(self, state_tensor):
