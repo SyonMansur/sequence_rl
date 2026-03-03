@@ -2,71 +2,84 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import random
-from model import DQN_Agent
+import os
+from model import DQN_Agent, DTPAgent
 
-# --- config ---
+# config
 CONFIG = {
     "num_actions": 16, 
-    "steps": 20000, 
-    "alpha": 0.001
+    "steps": 100000, 
+    "alpha": 0.001,
+    "use_dtp": True
 }
 
-# --- helpers ---
 def get_stimulus_representation(angle_index, total_options):
-    # converts angle index to sin/cos pair
+    # angle to sin and cos
     angles = np.linspace(0, 2 * np.pi, total_options, endpoint=False)
     theta = angles[angle_index]
     return [np.sin(theta), np.cos(theta)]
 
 def calculate_reward(prediction, target):
-    # binary reward. 1 for hit, 0 for miss.
+    # binary hit or miss
     return 1.0 if prediction == target else 0.0
 
-# --- main loop ---
 def run_experiment():
-    print(f"running experiment | generating all plots including smoothed q-values")
+    print("running simplified exp")
     
+    if not os.path.exists('plots'):
+        os.makedirs('plots')
+
     sequence_length = 3
-    agent = DQN_Agent(
-        input_dimensions=sequence_length * 2, 
-        num_actions=CONFIG["num_actions"], 
-        alpha=CONFIG["alpha"]
-    )
+    if CONFIG["use_dtp"]:
+        agent = DTPAgent(
+            input_dimensions=sequence_length * 2, 
+            num_actions=CONFIG["num_actions"], 
+            alpha=CONFIG["alpha"]
+        )
+    else:
+        agent = DQN_Agent(
+            input_dimensions=sequence_length * 2, 
+            num_actions=CONFIG["num_actions"], 
+            alpha=CONFIG["alpha"]
+        )
     
-    # history arrays
+    # basic tracking
     loss_history = []
     accuracy_history = []
-    activation_history = [] 
     trial_type_array = []
     
-    # tracking raw expectations over time
-    q_value_history = []
-    
-    # feedback metrics
+    # track acts and td errors
+    raw_act_l1_history = []
+    raw_act_l2_history = []
     l1_feedback_history = []
     l2_feedback_history = []
-    raw_error_history = []
+    
+    # math parts
+    delta_history = []
+    w3_history = []
+    a2_relu_history = []
+    a2_gated_history = []
 
     num_actions = CONFIG["num_actions"]
     angles = np.linspace(0, 2*np.pi, num_actions, endpoint=False) 
     
-    # setup reversal logic
+    # setup logic for the switch
     shift_lookup_table = {} 
     for xx in range(num_actions):
         target_theta = (angles[xx] - (np.pi/2)) % (2*np.pi)
         shift_lookup_table[xx] = np.argmin(np.abs(angles - target_theta)) 
 
-    # training loop
+    # main run
     for i in range(CONFIG["steps"]):
         stimulus_angle = random.randint(0, CONFIG["num_actions"] - 1)
         target_index = stimulus_angle        
     
-        # reversal: after halfway, small chance of shifted target
+        # hit them with the shift halfway thru
         if i > (CONFIG["steps"] / 2):
             if random.random() < 0.06:
                 target_index = shift_lookup_table[stimulus_angle]
 
-        # build input
+        # build out the input
         stim_seq = []
         stim_rep = get_stimulus_representation(stimulus_angle, CONFIG["num_actions"])
         for _ in range(sequence_length):
@@ -74,7 +87,7 @@ def run_experiment():
         
         state_tensor = torch.tensor(stim_seq, dtype=torch.float32).unsqueeze(0)
 
-        # get q values
+        # network guess
         with torch.no_grad():
             q_values = agent.model(state_tensor)
         
@@ -82,202 +95,169 @@ def run_experiment():
         expected_value = q_values[0, prediction].item()
         reward = calculate_reward(prediction, target_index)
 
-        # classification logic
+        # tag the trial
         if expected_value >= 0.7 and reward == 1.0:
-            trial_type = 0 # exp reward
+            trial_type = 0 
         elif expected_value < 0.3 and reward == 1.0:
-            trial_type = 1 # unexp reward
+            trial_type = 1 
         elif expected_value >= 0.7 and reward == 0.0:
-            trial_type = 2 # unexp lack
+            trial_type = 2 
         elif expected_value < 0.3 and reward == 0.0:
-            trial_type = 3 # exp lack
+            trial_type = 3 
         else:
-            trial_type = -1 # uncertain
+            trial_type = -1 
 
         trial_type_array.append(trial_type)
         
-        # update step
-        loss, l1_fb, l2_fb, raw_err = agent.update(state_tensor, prediction, reward)
-
-        # plasticity check
-        pre_activation = agent.model.activation_tensors['layer1'].clone().detach().cpu().numpy().flatten()
-        with torch.no_grad():
-            agent.model(state_tensor) 
-        post_activation = agent.model.activation_tensors['layer1'].clone().detach().cpu().numpy().flatten()
-        activation_delta = post_activation - pre_activation
+        # grab pre acts
+        pre_act_l1 = agent.model.activation_tensors['layer1'].clone().detach().cpu().numpy().flatten()
+        pre_act_l2 = agent.model.activation_tensors['layer2'].clone().detach().cpu().numpy().flatten()
         
-        # save histories
-        activation_history.append(activation_delta)
+        a_tensor = torch.tensor([[prediction]]) 
+        r_tensor = torch.tensor([[reward]], dtype=torch.float32)
+        
+        # fire updates
+        if CONFIG["use_dtp"]:
+            agent.update_inverse(state_tensor)
+            loss, l1_fb, l2_fb, raw_err, delta, w3_act, a2_relu, a2_gtd, w1_m, w2_m, w3_m = agent.update_forward(state_tensor, a_tensor, r_tensor)
+        else:
+            loss, l1_fb, l2_fb, raw_err, delta, w3_act, a2_relu, a2_gtd, w1_m, w2_m, w3_m = agent.update(state_tensor, a_tensor, r_tensor)
+
+        # log everything
+        raw_act_l1_history.append(pre_act_l1)
+        raw_act_l2_history.append(pre_act_l2)
         loss_history.append(loss)
         accuracy_history.append(reward) 
-        q_value_history.append(expected_value)
         l1_feedback_history.append(l1_fb)
         l2_feedback_history.append(l2_fb)
-        raw_error_history.append(raw_err)
         
-        if i % 1000 == 0:
-            print(f"step {i}, loss: {loss:.4f}, acc: {np.mean(accuracy_history[-100:]):.2f}")
+        delta_history.append(delta)
+        w3_history.append(w3_act)
+        a2_relu_history.append(a2_relu)
+        a2_gated_history.append(a2_gtd)
+        
+        if i % 10000 == 0:
+            print(f"step {i} loss {loss:.4f} acc {np.mean(accuracy_history[-100:]):.2f}")
 
-    # --- plotting ---
+    # plot prep
+    start_trial = CONFIG["steps"] // 2 
+    types = np.array(trial_type_array)
     type_labels = ['exp reward', 'unexp reward', 'unexp lack', 'exp lack']
     colors = ['forestgreen', 'lime', 'red', 'gray']
-    start_trial = CONFIG["steps"] // 2 
-    neuron_indexes = np.arange(len(activation_history[0])) 
-    width = 0.2 
-
-    # convert to numpy
-    act_matrix = np.array(activation_history)
+    
     l1_matrix = np.array(l1_feedback_history)
     l2_matrix = np.array(l2_feedback_history)
-    raw_matrix = np.array([np.full(len(neuron_indexes), err) for err in raw_error_history])
-    q_matrix = np.array(q_value_history) 
+    act1_matrix = np.array(raw_act_l1_history)
+    act2_matrix = np.array(raw_act_l2_history)
     
-    types = np.array(trial_type_array)
-    
+    neuron_indexes = np.arange(l1_matrix.shape[1]) 
+    width = 0.2 
+
     # calc means
-    means_act = [] 
     means_l1 = []
     means_l2 = []
-    means_raw = []
-    means_q = [] 
+    means_act1 = []
+    means_act2 = []
     
     for t in range(4): 
         matches = np.where((types == t) & (np.arange(len(types)) >= start_trial))[0]
         if len(matches) > 0:
-            means_act.append(np.mean(act_matrix[matches], axis=0))
             means_l1.append(np.mean(l1_matrix[matches], axis=0))
             means_l2.append(np.mean(l2_matrix[matches], axis=0))
-            means_raw.append(np.mean(raw_matrix[matches], axis=0))
-            means_q.append(np.mean(q_matrix[matches]))
+            means_act1.append(np.mean(np.abs(act1_matrix[matches]), axis=0))
+            means_act2.append(np.mean(np.abs(act2_matrix[matches]), axis=0))
         else:
-            zeros = np.zeros(act_matrix.shape[1])
-            means_act.append(zeros)
-            means_l1.append(zeros)
-            means_l2.append(zeros)
-            means_raw.append(zeros)
-            means_q.append(0.0)
+            z1 = np.zeros(l1_matrix.shape[1])
+            z2 = np.zeros(l2_matrix.shape[1])
+            means_l1.append(z1)
+            means_l2.append(z1)
+            means_act1.append(z1)
+            means_act2.append(z2)
 
-    # first plot: average loss
+    # plot one: loss and accuracy
     fig1, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
-    ax1.plot(loss_history, color='red', alpha=0.3)
     rolling_loss = [np.mean(loss_history[max(0, j-100):j+1]) for j in range(len(loss_history))]
     ax1.plot(rolling_loss, color='darkred', linewidth=2)
-    ax1.set_title(f"loss")
+    ax1.set_title("loss")
     
     rolling_acc = [np.mean(accuracy_history[max(0, j-100):j+1]) for j in range(len(accuracy_history))]
     ax2.plot(rolling_acc, color='blue')
     ax2.axvline(x=start_trial, color='black', linestyle='--')
     ax2.set_title("accuracy")
     plt.tight_layout()
-    plt.savefig('plots/1_average_loss.png')
+    plt.savefig('plots/1_loss_and_accuracy.png')
     plt.close()
 
-    # second plot: neural activations
-    fig2, (ax3, ax4) = plt.subplots(2, 1, figsize=(12, 10))
-    for idx, mean_vals in enumerate(means_act):
-        ax3.bar(neuron_indexes + (idx-1.5)*width, mean_vals, width, 
-                label=type_labels[idx], color=colors[idx])
-    ax3.set_title("mean activation delta")
+    # plot two: layer one topdown.
+    fig2, ax3 = plt.subplots(figsize=(12, 6))
+    for idx, mean_vals in enumerate(means_l1):
+        ax3.bar(neuron_indexes + (idx-1.5)*width, mean_vals, width, label=type_labels[idx], color=colors[idx])
+    ax3.set_title("layer one td signal")
     ax3.legend()
-    
-    omission_delta = means_act[2] - means_act[3]
-    ax4.bar(neuron_indexes, omission_delta, color='purple')
-    ax4.set_title("unexpected lack - expected lack")
-    ax4.axhline(0, color='black', linewidth=1)
     plt.tight_layout()
-    plt.savefig('plots/2_neural_activations.png')
+    plt.savefig('plots/2_layer_1_topdown.png')
     plt.close()
 
-    # third plot: layer 1 topdown
-    fig3, ax5 = plt.subplots(figsize=(12, 6))
-    for index, mean_vals in enumerate(means_l1):
-        ax5.bar(neuron_indexes + (index-1.5)*width, mean_vals, width, 
-                label=type_labels[index], color=colors[index])
-    ax5.set_title("layer 1 td signal")
-    ax5.set_ylabel("gradient magnitude")
+    # plot three: layer two topdown.
+    fig3, ax4 = plt.subplots(figsize=(12, 6))
+    for idx, mean_vals in enumerate(means_l2):
+        ax4.bar(neuron_indexes + (idx-1.5)*width, mean_vals, width, label=type_labels[idx], color=colors[idx])
+    ax4.set_title("layer two td signal")
+    ax4.legend()
+    plt.tight_layout()
+    plt.savefig('plots/3_layer_2_topdown.png')
+    plt.close()
+
+    # plot four: layer one activations
+    fig4, ax5 = plt.subplots(figsize=(12, 6))
+    for idx, mean_vals in enumerate(means_act1):
+        ax5.bar(neuron_indexes + (idx-1.5)*width, mean_vals, width, label=type_labels[idx], color=colors[idx])
+    ax5.set_title("layer one activations")
     ax5.legend()
     plt.tight_layout()
-    plt.savefig('plots/3_layer_1_topdown.png')
+    plt.savefig('plots/4_layer_1_activations.png')
     plt.close()
 
-    # fourth plot: layer 2 topdown
-    fig4, ax6 = plt.subplots(figsize=(12, 6))
-    for index, mean_vals in enumerate(means_l2):
-        ax6.bar(neuron_indexes + (index-1.5)*width, mean_vals, width, 
-                label=type_labels[index], color=colors[index])
-    ax6.set_title("layer 2 td signal")
-    ax6.set_ylabel("gradient magnitude")
+    # plot five: layer two activations
+    fig5, ax6 = plt.subplots(figsize=(12, 6))
+    for idx, mean_vals in enumerate(means_act2):
+        ax6.bar(neuron_indexes + (idx-1.5)*width, mean_vals, width, label=type_labels[idx], color=colors[idx])
+    ax6.set_title("layer two activations")
     ax6.legend()
     plt.tight_layout()
-    plt.savefig('plots/4_layer_2_topdown.png')
+    plt.savefig('plots/5_layer_2_activations.png')
     plt.close()
 
-    # fifth plot: raw source error
-    fig5, ax7 = plt.subplots(figsize=(12, 6))
-    for index, mean_vals in enumerate(means_raw):
-        ax7.bar(neuron_indexes + (index-1.5)*width, mean_vals, width, 
-                label=type_labels[index], color=colors[index])
-    ax7.set_title("raw output error")
-    ax7.set_ylabel("error magnitude")
-    ax7.legend()
-    plt.tight_layout()
-    plt.savefig('plots/5_raw_source_error.png')
-    plt.close()
+    # output the raw math at the end
+    lime_idx = np.where((types == 1) & (np.arange(len(types)) >= start_trial))[0]
+    red_idx = np.where((types == 2) & (np.arange(len(types)) >= start_trial))[0]
     
-    # sixth plot: agent confidence (bars)
-    fig6, ax8 = plt.subplots(figsize=(8, 6))
-    x_pos = np.arange(len(type_labels))
-    ax8.bar(x_pos, means_q, color=colors, alpha=0.8)
-    ax8.set_xticks(x_pos)
-    ax8.set_xticklabels(type_labels)
-    ax8.set_title("agent confidence (avg q)")
-    ax8.set_ylabel("predicted value")
-    ax8.set_ylim(0, 1.1)
-    for i, v in enumerate(means_q):
-        ax8.text(i, v + 0.02, f"{v:.2f}", ha='center', fontweight='bold')
-    plt.tight_layout()
-    plt.savefig('plots/6_agent_confidence.png')
-    plt.close()
-
-    # seventh plot: q values over time (smooth lines)
-    fig7, ax9 = plt.subplots(figsize=(12, 6))
-    
-    bin_size = 500  # average every 500 steps
-    max_steps = CONFIG["steps"]
-    bins = np.arange(0, max_steps, bin_size)
-    
-    for t_type in range(4):
-        # get all q values for this specific trial type
-        type_indices = np.where(types == t_type)[0]
+    if len(lime_idx) > 0 and len(red_idx) > 0:
+        print("\n--- comparing red and lime math ---")
         
-        bin_means = []
-        bin_centers = []
+        d_lime = np.mean(np.array(delta_history)[lime_idx])
+        d_red = np.mean(np.array(delta_history)[red_idx])
+        print(f"avg err -> lime: {d_lime:.3f} | red: {d_red:.3f}")
         
-        # calculate mean for each time window
-        for b in bins:
-            # find trials of this type within the window
-            in_bin = type_indices[(type_indices >= b) & (type_indices < b + bin_size)]
-            
-            if len(in_bin) > 0:
-                mean_q = np.mean(q_matrix[in_bin])
-                bin_means.append(mean_q)
-                bin_centers.append(b + (bin_size/2))
+        w3_lime = np.mean(np.abs(np.array(w3_history)[lime_idx]))
+        w3_red = np.mean(np.abs(np.array(w3_history)[red_idx]))
+        print(f"avg w3 -> lime: {w3_lime:.3f} | red: {w3_red:.3f}")
         
-        # plot smooth line
-        if len(bin_means) > 0:
-            ax9.plot(bin_centers, bin_means, color=colors[t_type], 
-                     linewidth=3, label=type_labels[t_type])
-
-    ax9.set_title("q value evolution")
-    ax9.set_xlabel("trial step")
-    ax9.set_ylabel("avg q value")
-    ax9.set_ylim(-0.1, 1.2)
-    ax9.grid(True, alpha=0.3)
-    ax9.legend(loc='center right')
-    
-    plt.tight_layout()
-    plt.savefig('plots/7_q_values_over_time_clean.png')
-    plt.close()
+        l2_lime = np.mean(l2_matrix[lime_idx])
+        l2_red = np.mean(l2_matrix[red_idx])
+        print(f"avg l2 td -> lime: {l2_lime:.3f} | red: {l2_red:.3f}")
+        
+        relu_lime = np.mean(np.array(a2_relu_history)[lime_idx])
+        relu_red = np.mean(np.array(a2_relu_history)[red_idx])
+        print(f"avg l2 deriv -> lime: {relu_lime:.3f} | red: {relu_red:.3f}")
+        
+        gated_lime = np.mean(np.abs(np.array(a2_gated_history)[lime_idx]))
+        gated_red = np.mean(np.abs(np.array(a2_gated_history)[red_idx]))
+        print(f"avg gated td -> lime: {gated_lime:.4f} | red: {gated_red:.4f}")
+        
+        l1_lime = np.mean(l1_matrix[lime_idx])
+        l1_red = np.mean(l1_matrix[red_idx])
+        print(f"avg l1 td -> lime: {l1_lime:.4f} | red: {l1_red:.4f}")
 
 if __name__ == "__main__":
     run_experiment()
