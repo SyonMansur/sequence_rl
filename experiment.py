@@ -8,9 +8,9 @@ from model import DQN_Agent, DTPAgent
 # config
 CONFIG = {
     "num_actions": 16, 
-    "steps": 100000, 
+    "steps": 90000, 
     "alpha": 0.001,
-    "use_dtp": True
+    "use_dtp": False
 }
 
 def get_stimulus_representation(angle_index, total_options):
@@ -24,7 +24,7 @@ def calculate_reward(prediction, target):
     return 1.0 if prediction == target else 0.0
 
 def run_experiment():
-    print("running simplified exp")
+    print("running")
     
     if not os.path.exists('plots'):
         os.makedirs('plots')
@@ -76,7 +76,7 @@ def run_experiment():
     
         # hit them with the shift halfway thru
         if i > (CONFIG["steps"] / 2):
-            if random.random() < 0.06:
+            if random.random() < 0.20:
                 target_index = shift_lookup_table[stimulus_angle]
 
         # build out the input
@@ -174,7 +174,7 @@ def run_experiment():
             means_act1.append(z1)
             means_act2.append(z2)
 
-    # plot one: loss and accuracy
+    # plot one. loss and acc.
     fig1, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
     rolling_loss = [np.mean(loss_history[max(0, j-100):j+1]) for j in range(len(loss_history))]
     ax1.plot(rolling_loss, color='darkred', linewidth=2)
@@ -188,7 +188,7 @@ def run_experiment():
     plt.savefig('plots/1_loss_and_accuracy.png')
     plt.close()
 
-    # plot two: layer one topdown.
+    # plot two. layer one topdown.
     fig2, ax3 = plt.subplots(figsize=(12, 6))
     for idx, mean_vals in enumerate(means_l1):
         ax3.bar(neuron_indexes + (idx-1.5)*width, mean_vals, width, label=type_labels[idx], color=colors[idx])
@@ -198,7 +198,7 @@ def run_experiment():
     plt.savefig('plots/2_layer_1_topdown.png')
     plt.close()
 
-    # plot three: layer two topdown.
+    # plot three. layer two topdown.
     fig3, ax4 = plt.subplots(figsize=(12, 6))
     for idx, mean_vals in enumerate(means_l2):
         ax4.bar(neuron_indexes + (idx-1.5)*width, mean_vals, width, label=type_labels[idx], color=colors[idx])
@@ -208,7 +208,7 @@ def run_experiment():
     plt.savefig('plots/3_layer_2_topdown.png')
     plt.close()
 
-    # plot four: layer one activations
+    # plot four. layer one acts.
     fig4, ax5 = plt.subplots(figsize=(12, 6))
     for idx, mean_vals in enumerate(means_act1):
         ax5.bar(neuron_indexes + (idx-1.5)*width, mean_vals, width, label=type_labels[idx], color=colors[idx])
@@ -218,7 +218,7 @@ def run_experiment():
     plt.savefig('plots/4_layer_1_activations.png')
     plt.close()
 
-    # plot five: layer two activations
+    # plot five. layer two acts.
     fig5, ax6 = plt.subplots(figsize=(12, 6))
     for idx, mean_vals in enumerate(means_act2):
         ax6.bar(neuron_indexes + (idx-1.5)*width, mean_vals, width, label=type_labels[idx], color=colors[idx])
@@ -226,6 +226,80 @@ def run_experiment():
     ax6.legend()
     plt.tight_layout()
     plt.savefig('plots/5_layer_2_activations.png')
+    plt.close()
+    
+    # figure two b recreation
+    # split second half into three blocks
+    halfway = CONFIG["steps"] // 2
+    sess_len = halfway // 3
+    sessions = [
+        (halfway, halfway + sess_len),
+        (halfway + sess_len, halfway + 2 * sess_len),
+        (halfway + 2 * sess_len, CONFIG["steps"])
+    ]
+    
+    # arrays for plotting
+    l1_dend_y, l1_dend_err = [], []
+    l2_dend_y, l2_dend_err = [], []
+    l1_soma_y, l1_soma_err = [], []
+    l2_soma_y, l2_soma_err = [], []
+    
+    for start, end in sessions:
+        # grab indices for this time block
+        block_idx = (np.arange(len(types)) >= start) & (np.arange(len(types)) < end)
+        viol_idx = np.where(block_idx & ((types == 1) | (types == 2)))[0]
+        match_idx = np.where(block_idx & ((types == 0) | (types == 3)))[0]
+        
+        if len(viol_idx) == 0 or len(match_idx) == 0:
+            continue
+            
+        # calc mean diff per neuron then avg across layer
+        # l1 dendrite (td signal)
+        l1_td_diff = np.mean(l1_matrix[viol_idx], axis=0) - np.mean(l1_matrix[match_idx], axis=0)
+        l1_dend_y.append(np.mean(l1_td_diff))
+        l1_dend_err.append(np.std(l1_td_diff) / np.sqrt(len(l1_td_diff)))
+        
+        # l2 dendrite (td signal)
+        l2_td_diff = np.mean(l2_matrix[viol_idx], axis=0) - np.mean(l2_matrix[match_idx], axis=0)
+        l2_dend_y.append(np.mean(l2_td_diff))
+        l2_dend_err.append(np.std(l2_td_diff) / np.sqrt(len(l2_td_diff)))
+        
+        # l1 soma (forward act)
+        l1_act_diff = np.mean(act1_matrix[viol_idx], axis=0) - np.mean(act1_matrix[match_idx], axis=0)
+        l1_soma_y.append(np.mean(l1_act_diff))
+        l1_soma_err.append(np.std(l1_act_diff) / np.sqrt(len(l1_act_diff)))
+        
+        # l2 soma (forward act)
+        l2_act_diff = np.mean(act2_matrix[viol_idx], axis=0) - np.mean(act2_matrix[match_idx], axis=0)
+        l2_soma_y.append(np.mean(l2_act_diff))
+        l2_soma_err.append(np.std(l2_act_diff) / np.sqrt(len(l2_act_diff)))
+
+    # draw the 2x2 grid
+    fig_2b, axs = plt.subplots(2, 2, figsize=(10, 8), sharex=True)
+    x_vals = [1, 2, 3]
+    
+    axs[0, 0].errorbar(x_vals, l1_dend_y, yerr=l1_dend_err, fmt='-o', color='lightgreen', linewidth=2)
+    axs[0, 0].set_title('l2/3-d (l1 dendrite (td feedback))')
+    axs[0, 0].axhline(0, color='gray', linestyle='--')
+    
+    axs[0, 1].errorbar(x_vals, l2_dend_y, yerr=l2_dend_err, fmt='-o', color='forestgreen', linewidth=2)
+    axs[0, 1].set_title('l5-d (l2 dendrite (td feedback))')
+    axs[0, 1].axhline(0, color='gray', linestyle='--')
+    
+    axs[1, 0].errorbar(x_vals, l1_soma_y, yerr=l1_soma_err, fmt='-o', color='lightskyblue', linewidth=2)
+    axs[1, 0].set_title('l2/3-s (l1 soma (activation))')
+    axs[1, 0].axhline(0, color='gray', linestyle='--')
+    
+    axs[1, 1].errorbar(x_vals, l2_soma_y, yerr=l2_soma_err, fmt='-o', color='steelblue', linewidth=2)
+    axs[1, 1].set_title('l5-s (l2 soma (activation))')
+    axs[1, 1].axhline(0, color='gray', linestyle='--')
+    
+    for ax in axs.flat:
+        ax.set_xticks([1, 2, 3])
+        ax.set_ylabel('difference in signal (violation - match)')
+        
+    plt.tight_layout()
+    plt.savefig('plots/6_fig2b_recreation.png')
     plt.close()
 
     # output the raw math at the end
