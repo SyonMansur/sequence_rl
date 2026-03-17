@@ -206,7 +206,7 @@ class DTPAgent:
         current_q = all_q_values.gather(1, action_tensor)
         target_q = reward_tensor
         
-        # global loss; keep graph to diff later.
+        # global loss; keep graph to diff later
         fwd_loss_main = self.criterion(current_q, target_q)
         raw_error = torch.mean(torch.abs(current_q - target_q)).detach().item()
         
@@ -278,7 +278,7 @@ class PCNetwork(nn.Module):
         self.activation = nn.Tanh()
         self.activation_tensors = {}
         
-        # orthogonal init
+        # orthogonal
         with torch.no_grad():
             for m in self.modules():
                 if isinstance(m, nn.Linear):
@@ -377,7 +377,7 @@ class PCAgent:
         l1_feedback = np.abs(a1.grad.detach().cpu().numpy().flatten()) if a1.grad is not None else np.zeros_like(a1.detach().cpu().numpy().flatten())
         l2_feedback = np.abs(a2.grad.detach().cpu().numpy().flatten()) if a2.grad is not None else np.zeros_like(a2.detach().cpu().numpy().flatten())
         
-        # mock parts to not crash visualizer
+        # no crash
         with torch.no_grad():
             current_q = q.gather(1, action_tensor)
             raw_error = torch.mean(torch.abs(current_q - reward_tensor)).item()
