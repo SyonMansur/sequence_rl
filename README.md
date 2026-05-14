@@ -12,8 +12,8 @@ The agent is trained on a pattern violation task based on Gillon et al. (2024).
 
 ## Learning Rules
 
-### Difference Target Propagation (DTP)
-DTP replaces global gradients with local **Targets**. It utilizes separate, learned **Inverse Neural Networks** to translate a target from a higher layer back to a lower one. Since inverse networks are often imperfect, a correction term is used to stabilize targets: $\hat{h}_{i-1}=h_{i-1}+g_{i}(\hat{h}_{i})-g_{i}(h_{i})$.
+### Difference Target Propagation (DTP) (Lee et al. 2015)
+DTP replaces global gradients with local **Targets**. It utilizes separate, learned **Inverse Neural Networks** to translate a target from a higher layer back to a lower one. Since inverse networks are often imperfect, a correction term is used to stabilize targets.
 
 ### Predictive Coding (PC)
 PC minimizes surprise by negotiating common ground between layers. It generates top-down guesses about sensory input and only processes the **prediction error** (mismatch) between those guesses and reality.
